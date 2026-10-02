@@ -1,0 +1,42 @@
+The clang-format wheels on PyPI are built by
+https://github.com/ssciwr/clang-format-wheel from the llvm-project source
+release of the same version, with LLVM and Clang linked statically into the
+clang-format binary. The wheels include only the wheel project's own
+Apache-2.0 license, so this directory adds the license files of the code
+that is compiled into the binary:
+
+  llvm/LICENSE.TXT    llvm/LICENSE.TXT of llvm-project
+  clang/LICENSE.TXT   clang/LICENSE.TXT of llvm-project
+  llvm/NOTICES        notices of the files in LLVM's Support library that
+                      come from other projects
+
+They were checked against LLVM 23, at the llvmorg-23.1.3 tag of
+https://github.com/llvm/llvm-project.
+
+The musllinux wheels, which the Alpine images install, also contain
+libstdc++ and libgcc_s in clang_format.libs. auditwheel copied them from
+the Alpine gcc package of the image the wheels were built in. They are
+licensed under GPL-3.0-or-later with the GCC Runtime Library Exception, and
+gcc/ holds GCC's COPYING3 and COPYING.RUNTIME from the releases/gcc-14.2.0
+tag of https://gcc.gnu.org/git/gcc.git. The image has gcc/ only when the
+installed wheel contains these libraries.
+
+auditwheel names the Alpine packages in
+clang_format-<version>.dist-info/sboms/auditwheel.cdx.json, which pip
+installs into the virtual environment. The build accepts a wheel only when
+they are the GCC build that gcc/ was checked against, libstdc++ and libgcc
+14.2.0-r6 from Alpine 3.22. The APKINDEX of Alpine 3.22 main names aports
+commit fbf60319be3bbaf6dd32ef55cc6fb7189e05c266 as their source. At that
+commit, the build recipe main/gcc applies its patches to the GCC 14.2.0
+release, whose SHA-512 it lists. These two archives are the corresponding
+source of the libraries. They are attached to the GitHub release of each
+version of the image, which the last line of the image's source file links
+to, and the GCC archive has its upstream signature next to it.
+
+GCC 14.2.0
+  https://gcc.gnu.org/pub/gcc/releases/gcc-14.2.0/gcc-14.2.0.tar.xz
+  sha256:a7b39bc69cbf9e25826c5a60ab26477001f7c08d85cec04bc0e29cabed6f3cc9
+  sha512:932bdef0cda94bacedf452ab17f103c0cb511ff2cec55e9112fc0328cbf1d803b42595728ea7b200e0a057c03e85626f937012e49a7515bc5dd256b2bf4bc396
+aports fbf60319be3bbaf6dd32ef55cc6fb7189e05c266 (main/gcc)
+  https://github.com/alpinelinux/aports/archive/fbf60319be3bbaf6dd32ef55cc6fb7189e05c266.tar.gz
+  sha256:f18eb64afcfbc1c7c0bf179951541141e6dd557df0f130df27ac933e0b868096

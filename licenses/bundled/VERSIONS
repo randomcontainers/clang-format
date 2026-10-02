@@ -1,0 +1,10 @@
+# The versions the files in this directory were checked against. The build
+# stops when the major version of clang-format is not "llvm", and when the
+# libstdc++ and libgcc in a wheel's clang_format.libs are not the Alpine
+# packages at version "gcc", as named in the wheel's auditwheel SBOM. The
+# Alpine build also stops when "gcc" is not a build of GCC_VERSION, the GCC
+# release whose source is attached to each release of this repository.
+# Change this file together with SOURCES and llvm/NOTICES, which name the
+# same versions.
+llvm 23
+gcc 14.2.0-r6
