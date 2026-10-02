@@ -1,0 +1,136 @@
+name: clang-format
+title: clang-format
+summary: Formats C, C++, Objective-C, C#, Java, JavaScript, JSON and Protocol Buffers code to the style in .clang-format, for whole files or changed lines only.
+homepage: https://clang.llvm.org/docs/ClangFormat.html
+# clang-format (LLVM and Clang, with third-party code in LLVM's Support
+# library), the wheel's own scripts, pip and the packages it vendors, and on
+# Alpine the libstdc++ and libgcc_s that the musllinux wheel carries (see
+# licenses/; their sources are the extra artifacts below).
+license: Apache-2.0 WITH LLVM-exception AND Apache-2.0 AND BSD-2-Clause AND BSD-3-Clause AND ISC AND MIT AND MPL-2.0 AND PSF-2.0 AND Unicode-DFS-2015 AND Unicode-DFS-2016 AND GPL-3.0-or-later WITH GCC-exception-3.1
+source-release: true
+upstream:
+  source: pypi
+  project: clang-format
+  # Three parts only: four-part versions such as 13.0.1.1 are rebuilds of
+  # the wheel and match no LLVM release.
+  tag-pattern: '^(\d+\.\d+\.\d+)$'
+  version-template: '{1}'
+  versioning: semver
+  version: 23.1.3
+  cooldown: 24h
+  publisher: ssciwr/clang-format-wheel
+  # The sources of the libstdc++ and libgcc_s in the musllinux wheels, which
+  # auditwheel copied from Alpine 3.22's libstdc++ and libgcc 14.2.0-r6: GCC,
+  # and aports at the commit those packages were built from, with the build
+  # recipe main/gcc. Change them together with gcc in
+  # licenses/bundled/VERSIONS and with licenses/bundled/SOURCES.
+  extra-artifacts:
+    gcc:
+      version: 14.2.0
+      url: https://gcc.gnu.org/pub/gcc/releases/gcc-{version}/gcc-{version}.tar.xz
+      signature: https://gcc.gnu.org/pub/gcc/releases/gcc-{version}/gcc-{version}.tar.xz.sig
+      sha256: a7b39bc69cbf9e25826c5a60ab26477001f7c08d85cec04bc0e29cabed6f3cc9
+      distros: [alpine]
+    aports:
+      version: fbf60319be3bbaf6dd32ef55cc6fb7189e05c266
+      url: https://github.com/alpinelinux/aports/archive/{version}.tar.gz
+      sha256: f18eb64afcfbc1c7c0bf179951541141e6dd557df0f130df27ac933e0b868096
+      distros: [alpine]
+image:
+  entrypoint: [clang-format]
+  cmd: [--help]
+  env: {PYTHONUNBUFFERED: "1", GIT_CONFIG_SYSTEM: /usr/local/etc/gitconfig}
+test:
+  - |
+    clang-format --version > version.txt
+    case " $(cat version.txt) " in
+      *" clang-format version $VERSION "*) ;;
+      *) echo "expected clang-format version $VERSION, got: $(cat version.txt)" >&2; exit 1 ;;
+    esac
+    # The command on PATH is the ELF binary from the wheel, not its Python wrapper.
+    bin=$(readlink -f "$(command -v clang-format)")
+    magic=$(od -A n -t x1 -N 4 "$bin" | tr -d ' \n')
+    if [ "$magic" != 7f454c46 ]; then
+      echo "$bin is not an ELF file, it starts with $magic" >&2; exit 1
+    fi
+    for tool in git-clang-format clang-format-diff.py clang-format-diff; do
+      command -v "$tool" > /dev/null || { echo "$tool is not on PATH" >&2; exit 1; }
+    done
+  - |
+    printf 'int  main( ){return 0;}\n' > a.c
+    printf 'int main() { return 0; }\n' > expected.c
+    clang-format --style=LLVM a.c > formatted.c || { echo "clang-format a.c exited with $?" >&2; exit 1; }
+    if ! cmp -s expected.c formatted.c; then
+      echo "expected:" >&2; cat expected.c >&2; echo "got:" >&2; cat formatted.c >&2; exit 1
+    fi
+    rc=0; clang-format --style=LLVM --dry-run --Werror a.c 2> violations.txt || rc=$?
+    if [ "$rc" = 0 ] || ! grep -q 'clang-format-violations' violations.txt; then
+      echo "--dry-run --Werror exited with $rc and printed:" >&2; cat violations.txt >&2; exit 1
+    fi
+    clang-format --style=LLVM -i a.c || { echo "clang-format -i a.c exited with $?" >&2; exit 1; }
+    if ! cmp -s expected.c a.c; then
+      echo "-i left:" >&2; cat a.c >&2; exit 1
+    fi
+    rc=0; clang-format --style=LLVM --dry-run --Werror a.c 2> clean.txt || rc=$?
+    if [ "$rc" != 0 ] || [ -s clean.txt ]; then
+      echo "--dry-run --Werror on the formatted file exited with $rc and printed:" >&2; cat clean.txt >&2; exit 1
+    fi
+  - |
+    # Without --style, clang-format reads the nearest .clang-format above the file.
+    mkdir -p project/src
+    printf '%s\n' 'BasedOnStyle: LLVM' 'IndentWidth: 8' 'AllowShortFunctionsOnASingleLine: None' > project/.clang-format
+    printf 'int f(){return 1;}\n' > project/src/f.c
+    printf '%s\n' 'int f() {' '        return 1;' '}' > config-expected.c
+    clang-format project/src/f.c > config.c || { echo "clang-format project/src/f.c exited with $?" >&2; exit 1; }
+    if ! cmp -s config-expected.c config.c; then
+      echo "expected:" >&2; cat config-expected.c >&2; echo "got:" >&2; cat config.c >&2; exit 1
+    fi
+    # --assume-filename picks the language for code read from standard input.
+    clang-format --style=LLVM --assume-filename=m.proto --dump-config > proto-config.txt ||
+      { echo "--dump-config for m.proto exited with $?" >&2; exit 1; }
+    if ! grep -Eq '^Language: +Proto$' proto-config.txt; then
+      echo "expected Language: Proto for m.proto, got:" >&2; cat proto-config.txt >&2; exit 1
+    fi
+    printf '%s\n' 'syntax = "proto3";' 'message M {int32   a=1;}' > m.txt
+    clang-format --style=LLVM --assume-filename=m.proto < m.txt > proto.txt ||
+      { echo "clang-format --assume-filename=m.proto exited with $?" >&2; exit 1; }
+    if ! grep -qF 'int32 a = 1;' proto.txt; then
+      echo "proto output:" >&2; cat proto.txt >&2; exit 1
+    fi
+  - |
+    # git-clang-format --diff and clang-format-diff.py exit with 1 when they print a diff.
+    git init -q -b main repo || { echo "git init exited with $?" >&2; exit 1; }
+    cd repo || exit 1
+    printf 'int f() { return 0; }\n' > f.c
+    git add f.c || { echo "git add exited with $?" >&2; exit 1; }
+    git -c user.name=t -c user.email=t@example.invalid commit -q -m init ||
+      { echo "git commit exited with $?" >&2; exit 1; }
+    printf 'int g(){return 1;}\n' >> f.c
+    rc=0; git clang-format --style=LLVM --diff > ../git-clang-format.txt || rc=$?
+    if [ "$rc" != 1 ] || ! grep -qxF '+int g() { return 1; }' ../git-clang-format.txt; then
+      echo "git clang-format --diff exited with $rc and printed:" >&2; cat ../git-clang-format.txt >&2; exit 1
+    fi
+    git diff -U0 --no-color HEAD > ../head.diff || { echo "git diff exited with $?" >&2; exit 1; }
+    rc=0; clang-format-diff.py -p1 -style=LLVM < ../head.diff > ../clang-format-diff.txt || rc=$?
+    if [ "$rc" != 1 ] || ! grep -qxF '+int g() { return 1; }' ../clang-format-diff.txt; then
+      echo "clang-format-diff.py exited with $rc and printed:" >&2; cat ../clang-format-diff.txt >&2; exit 1
+    fi
+    rc=0; clang-format-diff -p1 -style=LLVM < ../head.diff > ../clang-format-diff-2.txt || rc=$?
+    if [ "$rc" != 1 ] || ! cmp -s ../clang-format-diff.txt ../clang-format-diff-2.txt; then
+      echo "clang-format-diff exited with $rc and printed:" >&2; cat ../clang-format-diff-2.txt >&2; exit 1
+    fi
+    safe=$(git config --system --get-all safe.directory || true)
+    if [ "$safe" != "$(printf '%s\n' /work '/work/*')" ]; then
+      echo "expected safe.directory /work and /work/* in the system config, got:" >&2; printf '%s\n' "$safe" >&2; exit 1
+    fi
+examples:
+  - title: Format the C and C++ files of a git repository in place, using its .clang-format
+    command: docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" ghcr.io/randomcontainers/clang-format -i $(git ls-files '*.c' '*.cpp' '*.h')
+  - title: Fail when a file is not formatted, as a CI check
+    command: docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" ghcr.io/randomcontainers/clang-format --dry-run --Werror $(git ls-files '*.c' '*.cpp' '*.h')
+  - title: Show the formatting fixes for the lines changed since the branch left origin/main
+    command: docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" --entrypoint git ghcr.io/randomcontainers/clang-format clang-format --diff "$(git merge-base origin/main HEAD)"
+  - title: Format code from standard input
+    command: docker run --rm -i ghcr.io/randomcontainers/clang-format --assume-filename=main.cpp < main.cpp
+  - title: Write a .clang-format with every option of the Google style
+    command: docker run --rm ghcr.io/randomcontainers/clang-format --style=Google --dump-config > .clang-format
