@@ -1,0 +1,114 @@
+# syntax=docker/dockerfile:1.27.0@sha256:bde3983e9c939224420ddaf6b784cc30e09b035a4dea01f581230c50809f372e
+# check=error=true
+
+ARG BASE_IMAGE=alpine:3.24
+
+FROM ${BASE_IMAGE} AS build
+RUN apk add --no-cache python3
+
+# /usr/local/bin/clang-format links to the binary in the wheel. The wheel's
+# own clang-format script is a Python wrapper that would start Python on
+# every call. licenses/bundled/VERSIONS names the LLVM major version and the
+# GCC build that the license files in licenses/bundled were checked against.
+# GCC_* and APORTS_* name the sources of the libstdc++ and libgcc_s in the
+# wheel: the GCC release and Alpine's aports repository at the commit their
+# packages were built from (see licenses/bundled/SOURCES). Each release of
+# this repository has both attached, and the last lines of the image's
+# source file name them and the release.
+ARG VERSION
+ARG GCC_VERSION
+ARG GCC_URL
+ARG GCC_SHA256
+ARG APORTS_URL
+ARG APORTS_SHA256
+RUN --mount=type=bind,target=/src \
+    set -eu; \
+    : "${VERSION:?}" "${GCC_VERSION:?}" "${GCC_URL:?}" "${GCC_SHA256:?}" "${APORTS_URL:?}" "${APORTS_SHA256:?}"; \
+    if ! awk -v want="clang-format==${VERSION}" '$1 == want { found = 1 } END { exit !found }' /src/requirements.lock; then \
+        echo "requirements.lock does not pin clang-format==${VERSION}" >&2; exit 1; \
+    fi; \
+    checked=/src/licenses/bundled/VERSIONS; \
+    llvm="$(awk '$1 == "llvm" { print $2 }' "$checked")"; \
+    if [ "${VERSION%%.*}" != "$llvm" ]; then \
+        echo "licenses/bundled was checked for LLVM '$llvm', not ${VERSION}: compare llvm/LICENSE.TXT, clang/LICENSE.TXT and llvm/NOTICES with the llvmorg-${VERSION} tag, then update licenses/bundled/VERSIONS" >&2; exit 1; \
+    fi; \
+    venv=/usr/local/lib/clang-format; \
+    meta=/usr/local/share/randomcontainers/clang-format; \
+    python3 -m venv "$venv"; \
+    "$venv/bin/pip" install --no-cache-dir --disable-pip-version-check --no-input \
+        --require-hashes --no-deps --only-binary=:all: \
+        --report /tmp/pip-report.json -r /src/requirements.lock; \
+    bin="$("$venv/bin/python" -c 'import clang_format; print(clang_format.get_executable("clang-format"))')"; \
+    case "$bin" in \
+        "$venv"/lib/python3*/site-packages/clang_format/data/bin/clang-format) ;; \
+        *) echo "unexpected clang-format path: $bin" >&2; exit 1 ;; \
+    esac; \
+    if [ "$(head -c 4 "$bin")" != "$(printf '\177ELF')" ]; then \
+        echo "$bin is not an ELF file" >&2; exit 1; \
+    fi; \
+    ln -s "$bin" /usr/local/bin/clang-format; \
+    ln -s "$venv/bin/git-clang-format" /usr/local/bin/git-clang-format; \
+    ln -s "$venv/bin/clang-format-diff.py" /usr/local/bin/clang-format-diff.py; \
+    ln -s "$venv/bin/clang-format-diff.py" /usr/local/bin/clang-format-diff; \
+    installed="$(/usr/local/bin/clang-format --version)"; \
+    case " $installed " in \
+        *" clang-format version ${VERSION} "*) ;; \
+        *) echo "requirements.lock installs '$installed', expected clang-format version ${VERSION}" >&2; exit 1 ;; \
+    esac; \
+    ldd "$bin"; \
+    libs="${bin%/clang_format/data/bin/clang-format}/clang_format.libs"; \
+    if [ -d "$libs" ]; then \
+        ls -l "$libs"; \
+        for f in "$libs"/*; do \
+            case "${f##*/}" in \
+                libstdc++-*.so.*|libgcc_s-*.so.*) ;; \
+                *) echo "clang_format.libs has ${f##*/}, which licenses/bundled does not cover" >&2; exit 1 ;; \
+            esac; \
+        done; \
+        gcc="$(awk '$1 == "gcc" { print $2 }' "$checked")"; \
+        case "$gcc" in \
+            "${GCC_VERSION}"-r*) ;; \
+            *) echo "licenses/bundled/VERSIONS names the Alpine GCC build '$gcc', but GCC_VERSION is ${GCC_VERSION}" >&2; exit 1 ;; \
+        esac; \
+        sbom="${libs%/clang_format.libs}/clang_format-${VERSION}.dist-info/sboms/auditwheel.cdx.json"; \
+        for pkg in libstdc%2B%2B libgcc; do \
+            if ! grep -qF "\"pkg:apk/alpine/${pkg}@${gcc}\"" "$sbom"; then \
+                echo "$sbom does not list pkg:apk/alpine/${pkg}@${gcc}, the GCC build in licenses/bundled/SOURCES; it lists:" >&2; \
+                grep -o '"purl": "[^"]*"' "$sbom" >&2 || :; \
+                echo "update licenses/bundled/SOURCES and VERSIONS for the GCC build the wheel carries" >&2; exit 1; \
+            fi; \
+        done; \
+    fi; \
+    mkdir -p "$meta"; \
+    printf '%s\n' "$VERSION" > "$meta/version"; \
+    cp /src/runtime-deps.alpine "$meta/runtime-deps"; \
+    "$venv/bin/python" /src/scripts/metadata.py /tmp/pip-report.json "$meta"; \
+    rm /tmp/pip-report.json; \
+    bundled="$meta/licenses/clang-format/bundled"; \
+    mkdir -p "$bundled"; \
+    cp -R /src/licenses/bundled/SOURCES /src/licenses/bundled/llvm /src/licenses/bundled/clang "$bundled/"; \
+    if [ -d "$libs" ]; then \
+        cp -R /src/licenses/bundled/gcc "$bundled/"; \
+        printf '%s\n' "${GCC_URL}#sha256=${GCC_SHA256}" "${APORTS_URL}#sha256=${APORTS_SHA256}" >> "$meta/source"; \
+    fi; \
+    printf '%s\n' "https://github.com/randomcontainers/clang-format/releases/tag/v${VERSION}" >> "$meta/source"; \
+    mkdir -p /usr/local/etc; \
+    printf '[safe]\n\tdirectory = /work\n\tdirectory = /work/*\n' > /usr/local/etc/gitconfig
+
+FROM ${BASE_IMAGE} AS slim
+RUN --mount=type=bind,source=runtime-deps.alpine,target=/tmp/runtime-deps \
+    set -eu; \
+    xargs apk add --no-cache ca-certificates tini < /tmp/runtime-deps; \
+    addgroup -g 1000 app; \
+    adduser -D -u 1000 -G app app; \
+    install -d -m 1777 /work /cache
+COPY --link --from=build /usr/local/ /usr/local/
+# git reads /usr/local/etc/gitconfig, which marks /work and the directories
+# under it as safe, so that git-clang-format works in a mounted repository
+# owned by another UID. It is not /etc/gitconfig because images that include
+# clang-format copy only its /usr/local.
+ENV LANG=C.UTF-8 XDG_CACHE_HOME=/cache PYTHONUNBUFFERED=1 GIT_CONFIG_SYSTEM=/usr/local/etc/gitconfig
+WORKDIR /work
+USER 1000:1000
+ENTRYPOINT ["tini", "--", "clang-format"]
+CMD ["--help"]
