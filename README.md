@@ -167,7 +167,7 @@ The wheels include only the wheel project's license, so this repository adds the
 
 The `libstdc++` and `libgcc_s` in the musllinux wheels are taken from Alpine's libstdc++ and libgcc 14.2.0-r6 packages, which Alpine builds from GCC 14.2.0 with its own patches. Every release of this repository, named `v<version>` after the clang-format version, has the corresponding source attached: `gcc-14.2.0.tar.xz` with its signature, and Alpine's aports repository at the commit those packages were built from, as `<commit>.tar.gz`, with the build recipe and patches in `main/gcc`. Both are pinned under `extra-artifacts` in `package.yml`, and `SOURCES` explains how the libraries were matched to them. In the Alpine image, the last lines of `/usr/local/share/randomcontainers/clang-format/source` name the two archives and the release.
 
-The files in this repository are available under the MIT license, see [LICENSE](LICENSE).
+The files in this repository are available under the MIT license, see [LICENSE](LICENSE), except the license texts in `licenses/`, which keep their own terms.
 
 ## Requesting a tool
 
